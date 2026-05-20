@@ -1,0 +1,741 @@
+---
+title: "Análisis Bioinformático GitHub"
+author: "Victoria Arana Castillo"
+date: "Mayo, 2026"
+format: html
+editor: visual
+---
+
+# 1. Estadísticas de alineamiento STAR
+
+```{r}
+# Carga de librerías
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(Seurat)
+library(biomaRt)
+library(ggrepel)
+library(ComplexHeatmap)
+library(circlize)
+library(tidyr)
+library(readxl)
+library(UpSetR)
+library(ggstatsplot)
+```
+
+```{r}
+# Cargar estadísticas generadas por STAR
+star_data <- read.csv("data/star_stats.csv")
+```
+
+Se evaluó la calidad del alineamiento utilizando las estadísticas generadas por STAR.
+
+```{r}
+# Scatter plot de estadísticas de alineamiento
+plot_qc <- ggplot(star_data, aes(x = Input_Reads, y = Uniquely_Mapped_Percent)) + 
+  geom_point(aes(color = Multihit_Percent), 
+  size = 1, alpha = 0.8) + scale_color_gradient(low = "blue", high = "red", name = "% Multihit") + 
+  geom_hline(yintercept = 20, linetype = "dashed", color = "black") + 
+  labs(
+  title = "Mapping Statistics",
+  subtitle = "Input Reads vs Uniquely Mapped % (Colored by Multihit)",
+  x = "Number of Input Reads",
+  y = "% Uniquely Mapped Reads") + theme_minimal() + theme(legend.position = "right")
+
+print(plot_qc)
+
+```
+
+El porcentaje de lecturas multimapeadas indica el número de reads que alinean en más de una región del genoma, mientras que el porcentaje de lecturas únicas representa aquellas que alinean en una única localización.
+
+En experimentos de scRNA-seq es esperable observar porcentajes relativamente altos de multihit debido a la presencia de lecturas cortas, regiones repetidas y genes solapados. En *Drosophila melanogaster* este efecto puede verse incrementado por el tamaño reducido de muchos genes y la presencia de isoformas parcialmente compartidas.
+
+Un porcentaje elevado de lecturas multimapeadas no invalida necesariamente una muestra si el porcentaje de alineamiento único es adecuado, aunque sí puede indicar mayor ambigüedad en el alineamiento.
+
+
+# 2. Construcción del objeto Seurat
+
+## 2.1 Preparación de la matriz de conteos
+
+Seurat nececita una matriz de expresión génica donde: 
+  - Las filas representan genes.
+  - Las columnasrepresentan células individuales.
+
+Además, es necesario generar una tabla de metadatos indicando el grupo experimental de cada célula. 
+
+La construcción inicial de la matriz se realizó a partir de los archivos generados por HTSeq-count.
+
+```{r eval=FALSE}
+# crear matriz de conteo + grupos
+
+# Directorio con los archivos de conteo
+files_dir <- "data/HTSeq_Counts_Final/"
+
+# Lista de archivos de conteo
+file_list <- list.files(files_dir, pattern = "_counts.tsv")
+
+# Función para leer cada archivo de conteos
+read_counts <- function(filename) {
+  df <- read.table(file.path(files_dir, filename), header = FALSE, sep = "\t")
+  colnames(df) <- c("Gene", "Count")
+  
+  # Nombre de la muestra 
+  sample_name <- gsub("_counts.tsv", "", filename)
+  colnames(df)[2] <- sample_name
+  return(df)
+}
+
+# Lectura inicial
+raw_counts <- read_counts(file_list[1])
+
+# Unión de todas las muestras
+for (i in 2:length(file_list)) {
+  
+  # Comprobar que el archivo no esté vacío
+  if (file.size(file.path(files_dir, file_list[i])) > 0) {
+    
+    temp_df <- read_counts(file_list[i])
+    raw_counts <- merge(raw_counts, temp_df, by = "Gene", all = TRUE)
+    
+  }
+}
+
+# Definir nombres de fila
+rownames(raw_counts) <- raw_counts$Gene
+raw_counts <- raw_counts[, -1] # # Eliminar columna redundante
+raw_counts[is.na(raw_counts)] <- 0 # Sustituir valores NA por 0
+```
+
+## 2.2 Asignación de los grupos experimentales
+
+```{r eval=FALSE}
+# Crear tabla de metadatos
+metadata <- data.frame(Cell_ID = colnames(raw_counts))
+
+# Inicializar columna de grupos
+metadata$Group <- "Unknown" 
+
+# Asignación de grupos experimentales
+metadata$Group[grepl("900", metadata$Cell_ID)] <- "SC_T_REACT"
+metadata$Group[grepl("596", metadata$Cell_ID)] <- "SC_T_REACT"
+metadata$Group[grepl("597", metadata$Cell_ID)] <- "SC_T"
+metadata$Group[grepl("598", metadata$Cell_ID)] <- "CC_T"
+metadata$Group[grepl("743", metadata$Cell_ID)] <- "WT_Naive"
+metadata$Group[grepl("744", metadata$Cell_ID)] <- "WT_Naive"
+
+# Definir IDs como nombres de fila
+rownames(metadata) <- metadata$Cell_ID
+
+# Corrección manual de muestras mal clasificadas
+metadata$Group[metadata$Cell_ID == "GC160597_C04_S598"] <- "SC_T"
+metadata$Group[metadata$Cell_ID %in% c("GC160598_G06_S743","GC160598_G07_S744")] <- "CC_T"
+```
+
+## 2.3 Creación del objeto Seurat
+
+```{r eval=FALSE}
+seurat_obj <- CreateSeuratObject(counts = raw_counts, 
+                                 project = "SingleCell_Study",
+                                 min.cells = 3,
+                                 meta.data = metadata)
+```
+
+# 3. Carga del objeto Seurat
+
+Debido al tamaño de los datos y al tiempo de ejecución necesario para reconstruir la matriz completa, el análisis posterior se realizó utilizando directamente el objeto previamente guardado en formato `.rds`.
+
+```{r}
+seurat <- readRDS("Objetos/seurat_obj.rds")
+```
+
+# 4. Limpieza inicial del objeto 
+
+Se eliminaron las filas correspondientes a entradas técnicas generadas por HTSeq/STAR que no representan genes reales.
+
+```{r}
+# Limpiamos el objeto Seurat
+filas_basura <- grep("^--", rownames(seurat), value = TRUE)
+
+print("Filas a eliminar:")
+print(filas_basura)
+
+# Eliminar entradas técnicas
+seurat <- seurat[!rownames(seurat) %in% filas_basura, ]
+
+```
+
+# 5. Filtrado de células de baja calidad
+## 5.1 Identificación de genes mitocondriales
+
+Las células con altos porcentajes de expresión mitocondrial suelen corresponder a células dañadas o de baja calidad.
+
+```{r}
+# Lista de genes mitocondriales 
+genes_mito <- c("Dmel_CG34063", "Dmel_CG34067", "Dmel_CG34069", "Dmel_CG34072","Dmel_CG34073",
+"Dmel_CG34074", "Dmel_CG34076", "Dmel_CG34083", "Dmel_CG34085", "Dmel_CG34086",
+"Dmel_CG34089", "Dmel_CG34090", "Dmel_CG34092"
+)
+
+# Seurat reemplaza automáticamente "_" por "-"
+genes_mito <- gsub("_", "-", genes_mito)
+
+# Comprobamos qué genes están presentes
+genes_mito_encontrados <- intersect(genes_mito, rownames(seurat))
+
+print(paste("Genes mitocondriales encontrados:", length(genes_mito_encontrados)))
+print(genes_mito_encontrados)
+```
+
+## 5.2 Métricas de calidad
+
+```{r}
+
+# Calcular % mitocondrial 
+seurat[["percent.mt"]] <- PercentageFeatureSet(seurat, features = genes_mito_encontrados)
+
+# Visualización de métricas QC
+
+# Número de genes detectados
+plot1 <- VlnPlot(seurat, features = "nFeature_RNA", pt.size = 0.1) + 
+  ggtitle("Genes por Célula") + 
+  NoLegend()
+
+# Número total de lecturas
+plot2 <- VlnPlot(seurat, features = "nCount_RNA", pt.size = 0.1) + 
+  ggtitle("Lecturas Totales") + 
+  NoLegend()
+
+# Porcentaje mitocondrial
+plot3 <- VlnPlot(seurat, features = "percent.mt", pt.size = 0.1) + 
+  ggtitle("% Mitocondrial") + 
+  NoLegend()
+
+# Graficamos
+print(plot1)
+print(plot2)
+print(plot3)
+```
+
+
+```{r}
+#  Relación entre lecturas y genes detectados
+FeatureScatter(seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+```
+
+El scatter plot muestra una correlación moderada entre el número de reads y el número de genes detectados por célula, consistente con lo esperado en experimentos de scRNA-seq.
+
+El análisis de calidad mostró que el grupo GC148900 (SC_T_REACT) presentaba menor calidad global respecto al resto de grupos, con un mayor número de células con bajos conteos de genes.
+
+Para evitar un filtrado excesivamente restrictivo, se seleccionó un umbral entre 800 y 4000 genes detectados por célula.
+
+## 5.3 Filtrado final 
+### 5.3.1 Exclusión de muestras
+Las muestras GC148900 y GC163744 se excluyeron del análisis debido a su baja calidad global de alineamiento y a la ausencia de condiciones experimentales completas, respectivamente.
+
+```{r}
+# Cargar objeto Seurat previo al filtrado final
+seurat <- readRDS("Objetos/seurat_obj.rds")
+
+# Excluir muestras de baja calidad
+seurat <- subset(seurat, subset = !(orig.ident %in% c("GC148900", "GC163744")))
+```
+
+### 5.3.2 Filtrado por métricas  QC
+Se aplicaron filtros adicionales utilizando:
+- Número de genes detectados por célula.
+- Porcentaje de expresión mitocondrial.
+
+```{r}
+# Filtrado de células de baja calidad
+seurat_filtered <- subset(seurat, subset = nFeature_RNA > 800 & nFeature_RNA < 4000 & percent.mt < 5)
+
+# número de células antes y después del filtrado
+print("CÉLULAS SIN FILTRAR")
+print(table(seurat$Group))
+
+print("CÉLULAS FILTRADAS")
+print(table(seurat_filtered$Group))
+
+```
+
+Tras aplicar los filtros QC se eliminaron las células con bajos conteos génicos o elevada expresión mitocondrial.
+
+# 6. Normalización, selección de genes variables y escalado
+## 6.1 Normalización de datos
+
+```{r}
+# Normalización del objeto filtrado
+seurat_filtered <- NormalizeData(seurat_filtered)
+```
+
+## 6.2 Selección de genes variables
+
+En primer lugar, cargamos la tabla de genes con las anotaciones génicas.
+
+```{r}
+# Cargar tabla con símbolos génicos
+tabla_meta_genes <- readRDS("meta_genes.rds")
+
+#Visualizar estructura
+tabla_meta_genes["Symbol", drop = FALSE]
+
+```
+
+A continuación se identificaron los genes con mayor variabilidad entre células, ya que son los que contienen mayor información biológica para los análisis posteriores.
+
+```{r}
+# Detectar genes variables
+seurat_filtered <- FindVariableFeatures(seurat_filtered, selection.method = "vst", nfeatures = 2000)
+
+# Seleccionar los 10 genes más variables
+top10 <- head(VariableFeatures(seurat_filtered), 10)
+top10_ids <- tabla_meta_genes[top10, "Symbol"]
+
+# Visualización de genes variables
+plot_HVG <- VariableFeaturePlot(seurat_filtered) %>% 
+  LabelPoints(points = top10, labels = top10_ids, repel = TRUE)
+
+print(plot_HVG)
+```
+
+## 6.3 Escalado de datos
+
+```{r}
+all.genes <- rownames(seurat_filtered)
+seurat_filtered <- ScaleData(seurat_filtered, features = all.genes)
+
+```
+
+# 7. PCA
+
+El análisis de componentes principales (PCA) se utilizó para reducir la dimensionalidad de los datos y resumir la variación presente entre células.
+
+```{r}
+# Ejecutar PCA
+seurat_filtered <- RunPCA(seurat_filtered, features = VariableFeatures(object = seurat_filtered))
+
+# Genes con mayor contribución a los primeros PCs
+print(VizDimLoadings(seurat_filtered, dims = 1:2, reduction = "pca"))
+
+# Visualización PCA
+DimPlot(seurat_filtered, reduction = "pca", group.by = "Group") +
+  coord_cartesian(xlim = c(-20,20), ylim = c(-20,20))
+
+# Determinar número de PCs relevantes
+ElbowPlot(seurat_filtered)
+
+```
+
+# 8. Clustering
+
+Como se muestra en el elbow plot, las dimensiones escogidas son 15.
+
+```{r}
+# Construcción del grafo de vecinos cercanos 
+seurat_filtered <- FindNeighbors(seurat_filtered, dims = 1:15)
+
+# Clustering a múltiples resoluciones
+seurat_filtered <- FindClusters(seurat_filtered, resolution = c(0.1,0.3, 0.5, 0.7, 1))
+
+# UMAP
+seurat_filtered <- RunUMAP(seurat_filtered, dims = 1:15)
+
+# Visualización por clústers automáticos
+plot_clusters <- DimPlot(seurat_filtered, reduction = "umap", label = TRUE) + ggtitle("Clústers Automáticos")
+
+# Visualización por grupos experimentales
+plot_groups <- DimPlot(seurat_filtered, reduction = "umap", group.by = "Group") + ggtitle("Grupos Experimentales")
+
+# Mostrar ambos grafos
+print(plot_clusters + plot_groups)
+```
+
+La resolución controla el nivel de granularidad del clustering. Resoluciones bajas generan pocos clústers grandes, mientras que resoluciones altas producen un mayor número de clústers pequeños.
+
+Las resoluciones 0.3 y 0.5 mostraron una estructura de clústers más consistente y biológicamente interpretable.
+
+## 8.1 Comparación de resoluciones
+
+A continuación, vamos a comparar varias resoluciones para determinar cuál seleccionamos.
+
+```{r}
+DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.3")
+DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.5")
+DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.7")
+
+```
+
+## 8.2 Resolución final
+
+La resolución final elegida es la de 0.5.
+
+```{r}
+# Clustering final a resolución 0.5
+p_clusters <- DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.5", label = TRUE) +
+  ggtitle("Clusters Automáticos (res 0.5)")
+
+# Visualización por condiciones experimentales
+p_condiciones <- DimPlot(seurat_filtered, group.by = "Group") + ggtitle("Grupos Experimentales")
+
+# Mostrar ambos grafos
+print(p_clusters + p_condiciones)
+
+```
+
+# 9. Isla Norte
+
+## 9.1 Marcadores MB isla norte
+
+Ahora sí, vamos a responder a la pregunta de si las células de la isla norte expresan marcadores del MB o no. Esta respuesta determinará si eliminamos este cluster o lo mantenemos.
+
+Una vez que tenemos los genes diferencialmente expresados, tenemos que hacer un cruce con los marcadores típicos presentes en el Mushroom Body (MB) para determinar si estamos o no en la diana de memoria, que es lo que nos interesa.
+
+En primer lugar, cargamos el diccionario de marcadores mb:
+
+```{r}
+# Los mb_markers ahora son simplemente los IDs de este diccionario
+diccionario_mb <- readRDS("diccionario_marcadores_MB.rds")
+
+mb_markers <- names(diccionario_mb)
+head(mb_markers)
+
+```
+
+```{r}
+# Comprobamos si estan en el objeto seurat
+
+# Vemos si existen
+intersect(mb_markers, rownames(seurat_filtered))
+```
+
+```{r}
+# Vemos los que faltan
+setdiff(mb_markers, rownames(seurat_filtered))
+
+```
+
+```{r}
+# Calculamos los marcadores
+markers_isla <- FindMarkers(
+  seurat_filtered,
+  ident.1 = cluster_norte,
+  group.by = "RNA_snn_res.0.5",
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+# Filtramos la tabla para quedarnos SOLO con los marcadores MB
+markers_mb_isla <- markers_isla[rownames(markers_isla) %in% mb_markers, ]
+
+# Añadimos la columna 'Symbol' usando el diccionario
+markers_mb_isla$Symbol <- diccionario_mb[rownames(markers_mb_isla)]
+
+# Reordenamos para que el nombre real sea lo primero que salga
+markers_mb_isla <- markers_mb_isla[, c("Symbol", setdiff(colnames(markers_mb_isla), "Symbol"))]
+
+# Comprobamos
+markers_mb_isla
+```
+
+### 9.1.1 Log2FC de los marcadores MB en la isla norte
+
+```{r}
+# Extraemos los marcadores de MB
+markers_mb <- markers_isla[rownames(markers_isla) %in% mb_markers, ]
+
+# Traducimos usando los nombres de fila (rownames)
+markers_mb$Symbol <- diccionario_mb[rownames(markers_mb)]
+
+# Gráfico (También ordenado de mayor a menor Log2FC)
+ggplot(markers_mb, aes(x = reorder(Symbol, avg_log2FC), y = avg_log2FC)) +
+  geom_col(fill = "darkorange") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = "Cambios de expresión de marcadores MB en la isla norte",
+    y = "avg.log2FC (Isla norte vs Resto)",
+    x = "Marcadores MB"
+  ) +
+  theme_minimal()
+
+```
+
+# 10. Isla Sur 
+## 10.1 Reprocesado de los datos
+Seleccionamos todos los clústers excepto el clúster que pertenece a la isla norte
+
+```{r}
+# 1. Seleccionamos solo los clusters de la "Isla Sur"
+seurat_clean <- subset(seurat_filtered, idents = c(0, 1, 2))
+
+# 2. Rehacemos análisis
+seurat_clean <- NormalizeData(seurat_clean)
+seurat_clean <- FindVariableFeatures(seurat_clean, selection.method = "vst", nfeatures = 2000)
+seurat_clean <- ScaleData(seurat_clean)
+```
+
+ Reprocesamos los datos de nuevo: **PCA**
+
+```{r}
+seurat_clean <- RunPCA(seurat_clean, features = VariableFeatures(seurat_clean))
+
+# visualizamos el PCA
+DimPlot(seurat_clean, reduction = "pca", group.by = "Group") +
+  coord_cartesian(xlim = c(-20,20), ylim = c(-20,20))
+
+ElbowPlot(seurat_clean)
+
+```
+
+Observamos una población homogenea de células, indicando que todos tus grupos son el mismo tipo celular. Al estar entremezcladas, los cambios son sutiles y específicos. La memoria no cambia la estructura del cerebro, cambia las sinapsis específicas.
+
+**Clustering**
+
+A partir del PCA elgimos las 15 dimensiones.
+
+```{r}
+seurat_clean <- FindNeighbors(seurat_clean, dims = 1:15)
+seurat_clean <- FindClusters(seurat_clean, resolution = c(0.5))
+seurat_clean <- RunUMAP(seurat_clean, dims = 1:15)
+
+# Visualización
+plot_clean_clusters <- DimPlot(seurat_clean, reduction = "umap", label = TRUE) + ggtitle("Clústers Automáticos")
+plot_clean_groups <- DimPlot(seurat_clean, reduction = "umap", group.by = "Group") + ggtitle("Grupos Experimentales")
+
+# Mostrar ambos
+print(plot_clean_clusters + plot_clean_groups)
+
+```
+## 10.2 Pie charts por cluster -\> ¿de qué está compuesto cada cluster?
+
+```{r}
+ggpiestats(
+  data = df_cluster_group_clean,
+  x = "Group",
+  y = "Cluster",
+  counts = "Cells",
+  title = "Composición de cada clúster por condición experimental",
+  legend.title = "Condición",
+  results.subtitle = FALSE, # quitar estadísticas
+  palette =  "ggsci::default_jama"  
+) +
+  theme(
+    strip.background = element_rect(fill = "white", color = "black"),
+    plot.title = element_text(margin = margin(b = 20), hjust = 0.5, size = 14)
+  )
+```
+
+
+
+## 10.3 Genes DE por clúster
+Se van a determinar los genes DE por cluster para comprobar qué genes hacen únicos estos clusters. Para ello, buscaremos los marcadores específicos de un cluster frente al resto. Vamos a analizar cluster por cluster.
+
+```{r}
+# clusters isla sur
+Idents(seurat_clean) <- "RNA_snn_res.0.5"
+
+# genes sobreexpresados que definen a cada cluster
+markers_cluster0 <- FindMarkers(seurat_clean, ident.1 = "0", ident.2 = NULL, only.pos = TRUE, 
+                                min.pct = 0.25, logfc.threshold =  0.25 )
+markers_cluster1 <- FindMarkers(seurat_clean, ident.1 = "1", ident.2 = NULL, only.pos = TRUE,
+                                min.pct =  0.25, logfc.threshold =  0.25)
+markers_cluster2 <- FindMarkers(seurat_clean, ident.1 = "2", ident.2 = NULL, only.pos = TRUE,
+                                min.pct =  0.25, logfc.threshold =  0.25) 
+
+# seleccionamos top 10 genes por cluster
+top0 <- markers_cluster0  %>%  arrange(desc(avg_log2FC)) %>% head(20)
+top1 <- markers_cluster1  %>%  arrange(desc(avg_log2FC)) %>% head(20)
+top2 <- markers_cluster2  %>%  arrange(desc(avg_log2FC)) %>% head(20)
+
+genes_clusters <- c(rownames(top0), rownames(top1), rownames(top2))
+
+```
+
+Heatmaps:
+
+```{r}
+# visualizamos: agrupando por clusters
+seurat_clean <- ScaleData(seurat_clean, features = genes_clusters)
+
+de <- DoHeatmap(seurat_clean, features = genes_clusters, group.by = "RNA_snn_res.0.5", label = TRUE) +
+  scale_y_discrete(labels = labels_genes) +
+  scale_fill_gradientn(colors = c("darkblue", "white", "red"),
+  limits = c(-2,2), oob = scales::squish) +
+  ggtitle("Top 20 genes DE por cluster - Isla Sur") + 
+  theme(axis.text.y = element_text(size = 7, lineheight = 1.2), plot.margin = margin(10,10,10,10))
+
+print(de)
+
+```
+
+## 10.4 Marcadores MB isla sur
+
+```{r}
+# Calculamos los marcadores
+markers_isla_clean <- FindAllMarkers(
+  seurat_clean,
+  group.by = "RNA_snn_res.0.5",
+  min.pct = 0.25
+)
+
+# Filtramos la tabla para quedarnos SOLO con los marcadores MB
+markers_mb_isla_clean <- markers_isla_clean[markers_isla_clean$gene %in% mb_markers, ]
+
+# Añadimos la columna 'Symbol' usando el diccionario
+markers_mb_isla_clean$Symbol <- diccionario_mb[markers_mb_isla_clean$gene]
+
+# Reordenamos para que el nombre real sea lo primero que salga
+markers_mb_isla_clean <- markers_mb_isla_clean[, c("Symbol", setdiff(colnames(markers_mb_isla_clean), "Symbol"))]
+
+# Comprobamos
+markers_mb_isla_clean
+
+```
+
+### 10.4.1 Log2FC de los marcadores MB en la isla sur
+
+```{r}
+# Calculamos los marcadores de la Isla Sur vs el Resto del cerebro
+markers_sur <- FindMarkers(
+  seurat_filtered, 
+  ident.1 = c(0,1,2), 
+  group.by = "RNA_snn_res.0.5",
+  min.pct = 0.25
+)
+
+# Extraemos los marcadores de MB
+markers_mb_sur <- markers_sur[rownames(markers_sur) %in% mb_markers, ]
+
+# Traducimos usando los nombres de fila
+markers_mb_sur$Symbol <- diccionario_mb[rownames(markers_mb_sur)]
+
+# Visualizamos 
+ggplot(markers_mb_sur, aes(x = reorder(Symbol, avg_log2FC), y = avg_log2FC)) +
+  geom_col(fill = "darkorange") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = "Cambios de expresión de marcadores MB en la isla sur", 
+    y = "avg.log2FC (Isla sur vs Resto)", 
+    x = "Marcadores MB"
+  ) +
+  theme_minimal()
+
+```
+
+### 10.4.2 Expresión y frecuencia de los Marcadores MB
+
+```{r}
+# Definimos los clusters de la isla sur
+Idents(seurat_clean) <- "RNA_snn_res.0.5"
+
+# Dibujamos el DotPlot
+DotPlot(
+  seurat_clean, # Usamos el objeto filtrado
+  features = mb_markers, 
+  group.by = "RNA_snn_res.0.5",
+  cols = c("lightgrey", "firebrick3") # Colores limpios
+) + 
+  RotatedAxis() + 
+  scale_x_discrete(labels = diccionario_mb) + 
+  ggtitle("Frecuencia y Expresión de Marcadores MB (Isla Sur)") +
+  theme(
+    axis.text.x = element_text(size = 10, face = "italic"), # Nombres de genes en cursiva (estándar científico)
+    axis.title = element_blank() # Quita etiquetas redundantes de los ejes
+  )
+ 
+```
+
+### 10.1.3 Plots de determinados marcadores MB
+
+```{r}
+# ID interno
+prt <- "Dmel-CG10251"
+
+# Nombre real
+mb_marker_name <- tabla_meta_genes$Symbol[match(prt, rownames(tabla_meta_genes))]
+
+VlnPlot(
+  seurat_clean,
+  features = prt,          # ID interno
+  group.by = "seurat_clusters",    # agrupar por clusters
+  pt.size = 0
+) +
+  ggtitle(mb_marker_name) + 
+  xlab("Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# ID interno
+mub <- "Dmel-CG7437"
+
+# Nombre real
+mb_marker_name <- tabla_meta_genes$Symbol[match(mub, rownames(tabla_meta_genes))]
+
+VlnPlot(
+  seurat_clean,
+  features = mub,          # ID interno
+  group.by = "seurat_clusters",    # agrupar por clusters
+  pt.size = 0
+) +
+  ggtitle(mb_marker_name) + 
+  xlab("Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# ID interno
+Dop1R2 <- "Dmel-CG18741"
+
+# Nombre real
+mb_marker_name <- tabla_meta_genes$Symbol[match(Dop1R2, rownames(tabla_meta_genes))]
+
+VlnPlot(
+  seurat_clean,
+  features = Dop1R2,          # ID interno
+  group.by = "seurat_clusters",    # agrupar por clusters
+  pt.size = 0
+) +
+  ggtitle(mb_marker_name) + 
+  xlab("Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# ID interno
+mamo <- "Dmel-CG45477"
+
+# Nombre real
+mb_marker_name <- tabla_meta_genes$Symbol[match(mamo, rownames(tabla_meta_genes))]
+
+VlnPlot(
+  seurat_clean,
+  features = mamo,          # ID interno
+  group.by = "seurat_clusters",    # agrupar por clusters
+  pt.size = 0
+) +
+  ggtitle(mb_marker_name) +
+  xlab("Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# ID interno
+ey <- "Dmel-CG1464"
+
+# Nombre real
+mb_marker_name <- tabla_meta_genes$Symbol[match(ey, rownames(tabla_meta_genes))]
+
+VlnPlot(
+  seurat_clean,
+  features = ey,          # ID interno
+  group.by = "seurat_clusters",    # agrupar por clusters
+  pt.size = 0
+) +
+  ggtitle(mb_marker_name) + 
+  xlab("Clusters") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
