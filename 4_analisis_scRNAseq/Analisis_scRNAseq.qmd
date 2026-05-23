@@ -1,12 +1,10 @@
 ---
-title: "Análisis Bioinformático GitHub"
+title: "Análisis scRNA-seq"
 author: "Victoria Arana Castillo"
 date: "Mayo, 2026"
 format: html
 editor: visual
 ---
-
-# 1. Estadísticas de alineamiento STAR
 
 ```{r}
 # Librerías
@@ -23,9 +21,11 @@ library(UpSetR)
 library(ggstatsplot)
 ```
 
+# 1. Estadísticas de alineamiento STAR
+
 ```{r}
 # Cargar estadísticas generadas por STAR
-star_data <- read.csv("data/star_stats.csv")
+star_data <- read.csv("tablas/star_stats.csv")
 ```
 
 Se evaluó la calidad del alineamiento utilizando las estadísticas generadas por STAR.
@@ -34,7 +34,8 @@ Se evaluó la calidad del alineamiento utilizando las estadísticas generadas po
 # Scatter plot de estadísticas de alineamiento
 plot_qc <- ggplot(star_data, aes(x = Input_Reads, y = Uniquely_Mapped_Percent)) + 
   geom_point(aes(color = Multihit_Percent), 
-  size = 1, alpha = 0.8) + scale_color_gradient(low = "blue", high = "red", name = "% Multihit") + 
+  size = 1, alpha = 0.8) + scale_color_gradient(low = "blue", high = "red", 
+  name = "% Multihit") + 
   geom_hline(yintercept = 20, linetype = "dashed", color = "black") + 
   labs(
   title = "Mapping Statistics",
@@ -46,17 +47,15 @@ print(plot_qc)
 
 ```
 
-El porcentaje de lecturas multimapeadas indica el número de reads que alinean en más de una región del genoma, mientras que el porcentaje de lecturas únicas representa aquellas que alinean en una única localización.
-
-En experimentos de scRNA-seq es esperable observar porcentajes relativamente altos de multihit debido a la presencia de lecturas cortas, regiones repetidas y genes solapados. En *Drosophila melanogaster* este efecto puede verse incrementado por el tamaño reducido de muchos genes y la presencia de isoformas parcialmente compartidas.
-
-Un porcentaje elevado de lecturas multimapeadas no invalida necesariamente una muestra si el porcentaje de alineamiento único es adecuado, aunque sí puede indicar mayor ambigüedad en el alineamiento.
-
 # 2. Construcción del Seurat
 
 ## 2.1 Preparación de la matriz de conteos
 
-Seurat nececita una matriz de expresión génica donde: - Las filas representan genes. - Las columnasrepresentan células individuales.
+Seurat nececita una matriz de expresión génica donde:
+
+-   Las filas representan genes.
+
+-   Las columnas representan células individuales.
 
 Además, es necesario generar una tabla de metadatos indicando el grupo experimental de cada célula.
 
@@ -128,7 +127,7 @@ metadata$Group[metadata$Cell_ID == "GC160597_C04_S598"] <- "SC_T"
 metadata$Group[metadata$Cell_ID %in% c("GC160598_G06_S743","GC160598_G07_S744")] <- "CC_T"
 ```
 
-## 2.3 Creación del Seurat
+## 2.3 Creación del objeto Seurat
 
 ```{r eval=FALSE}
 seurat_obj <- CreateSeuratObject(counts = raw_counts, 
@@ -137,15 +136,15 @@ seurat_obj <- CreateSeuratObject(counts = raw_counts,
                                  meta.data = metadata)
 ```
 
-# 3. Carga del Seurat
+# 3. Carga del objeto Seurat
 
-Debido al tamaño de los datos y al tiempo de ejecución necesario para reconstruir la matriz completa, el análisis posterior se realizó utilizando directamente el previamente guardado en formato `.rds`.
+Debido al tamaño de los datos y al tiempo de ejecución necesario para reconstruir la matriz completa, el análisis posterior se realizó utilizando directamente el objeto previamente guardado en formato `.rds`.
 
 ```{r}
 seurat <- readRDS("objetos/seurat_obj.rds")
 ```
 
-# 4. Limpieza inicial del
+# 4. Limpieza inicial del objeto
 
 Se eliminaron las filas correspondientes a entradas técnicas generadas por HTSeq/STAR que no representan genes reales.
 
@@ -189,29 +188,30 @@ print(genes_mito_encontrados)
 ```{r}
 
 # Calcular % mitocondrial 
-seurat[["percent.mt"]] <- PercentageFeatureSet(seurat, features = genes_mito_encontrados)
+seurat[["percent.mt"]] <- PercentageFeatureSet(seurat, 
+                        features = genes_mito_encontrados)
 
 # Visualización de métricas QC
 
 # Número de genes detectados
-plot1 <- VlnPlot(seurat, features = "nFeature_RNA", pt.size = 0.1) + 
+plot_genes <- VlnPlot(seurat, features = "nFeature_RNA", pt.size = 0.1) + 
   ggtitle("Genes por Célula") + 
   NoLegend()
 
 # Número total de lecturas
-plot2 <- VlnPlot(seurat, features = "nCount_RNA", pt.size = 0.1) + 
+plot_lecturas <- VlnPlot(seurat, features = "nCount_RNA", pt.size = 0.1) + 
   ggtitle("Lecturas Totales") + 
   NoLegend()
 
 # Porcentaje mitocondrial
-plot3 <- VlnPlot(seurat, features = "percent.mt", pt.size = 0.1) + 
+plot_mito <- VlnPlot(seurat, features = "percent.mt", pt.size = 0.1) + 
   ggtitle("% Mitocondrial") + 
   NoLegend()
 
 # Graficamos
-print(plot1)
-print(plot2)
-print(plot3)
+print(plot_genes)
+print(plot_lecturas)
+print(plot_mito)
 ```
 
 ```{r}
@@ -238,7 +238,11 @@ seurat <- subset(seurat, subset = !(orig.ident %in% c("GC148900", "GC163744")))
 
 ### 5.3.2 Filtrado por métricas QC
 
-Se aplicaron filtros adicionales utilizando: - Número de genes detectados por célula. - Porcentaje de expresión mitocondrial.
+Se aplicaron filtros adicionales utilizando:
+
+-   Número de genes detectados por célula.
+
+-   Porcentaje de expresión mitocondrial.
 
 ```{r}
 # Filtrado de células de baja calidad
@@ -253,20 +257,18 @@ print(table(seurat_filtered$Group))
 
 ```
 
-Tras aplicar los filtros QC se eliminaron las células con bajos conteos génicos o elevada expresión mitocondrial.
-
 # 6. Normalización, selección de genes variables y escalado
 
-## 6.1 Normalización de datos
+**1. Normalización de datos**
 
 ```{r}
 # Normalización del  filtrado
 seurat_filtered <- NormalizeData(seurat_filtered)
 ```
 
-## 6.2 Selección de genes variables
+**2. Selección de genes variables**
 
-En primer lugar, cargamos la tabla de genes con las anotaciones génicas.
+Cargamos la tabla de genes con las anotaciones génicas.
 
 ```{r}
 # Cargar tabla con símbolos génicos
@@ -277,7 +279,7 @@ tabla_meta_genes["Symbol", drop = FALSE]
 
 ```
 
-A continuación, se identificaron los genes con mayor variabilidad entre células, ya que son los que contienen mayor información biológica para los análisis posteriores.
+Se identificaron los genes con mayor variabilidad entre células, ya que son los que contienen mayor información biológica para los análisis posteriores.
 
 ```{r}
 # Detectar genes variables
@@ -294,7 +296,7 @@ plot_HVG <- VariableFeaturePlot(seurat_filtered) %>%
 print(plot_HVG)
 ```
 
-## 6.3 Escalado de datos
+**3. Escalado de datos**
 
 ```{r}
 all.genes <- rownames(seurat_filtered)
@@ -352,7 +354,7 @@ Las resoluciones 0.3 y 0.5 mostraron una estructura de clústers más consistent
 
 ## 8.1 Comparación de resoluciones
 
-A continuación, vamos a comparar varias resoluciones para determinar cuál seleccionamos.
+A continuación, se van a comparar varias resoluciones para determinar cuál seleccionar.
 
 ```{r}
 DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.3")
@@ -367,8 +369,7 @@ La resolución final elegida fue la de 0.5.
 
 ```{r}
 # Clustering final a resolución 0.5
-p_clusters <- DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.5", label = TRUE) +
-  ggtitle("Clusters Automáticos (res 0.5)")
+p_clusters <- DimPlot(seurat_filtered, group.by = "RNA_snn_res.0.5", label = TRUE) + ggtitle("Clusters Automáticos (res 0.5)")
 
 # Visualización por condiciones experimentales
 p_condiciones <- DimPlot(seurat_filtered, group.by = "Group") + ggtitle("Grupos Experimentales")
@@ -382,7 +383,7 @@ print(p_clusters + p_condiciones)
 
 ## 9.1 Marcadores del MB
 
-Se evaluó si las células correspondientes a la isla norte expresaban marcadores característicos del Mushroom Body (MB).
+Se evaluó si las células correspondientes a la isla norte expresaban marcadores característicos del MB.
 
 ```{r}
 # Cargar diccionario de marcadores MB
@@ -396,21 +397,21 @@ head(mb_markers)
 
 ```{r}
 # Comprobacaión de marcadores presentes
-
 # Marcadores presentes
 intersect(mb_markers, rownames(seurat_filtered))
+
 # Marcadores ausentes
 setdiff(mb_markers, rownames(seurat_filtered))
 
 ```
 
-\*\* Genes diferencialmente expresados en la isla norte\*\*
+**Genes diferencialmente expresados en la isla norte**
 
 ```{r}
-#  Calcular genes diferencialmente expresados
+# Calcular genes diferencialmente expresados
 markers_isla <- FindMarkers(
   seurat_filtered,
-  ident.1 = cluster_norte,
+  ident.1 = "3",
   group.by = "RNA_snn_res.0.5",
   min.pct = 0.25,
   logfc.threshold = 0.25
@@ -463,9 +464,10 @@ Tras identificar la isla norte como una población separada, se seleccionaron ú
 # Seleccionar clústers correspondientes a la isla sur
 seurat_clean <- subset(seurat_filtered, idents = c(0, 1, 2))
 
-# Reprocesado del  Seurat
+# Reprocesado del objeto Seurat
 seurat_clean <- NormalizeData(seurat_clean)
-seurat_clean <- FindVariableFeatures(seurat_clean, selection.method = "vst", nfeatures = 2000)
+seurat_clean <- FindVariableFeatures(seurat_clean, 
+                selection.method = "vst", nfeatures = 2000)
 seurat_clean <- ScaleData(seurat_clean)
 ```
 
@@ -493,7 +495,7 @@ Se eligieron los primeros 15 componentes.
 seurat_clean <- FindNeighbors(seurat_clean, dims = 1:15)
 
 # Clustering
-seurat_clean <- FindClusters(seurat_clean, resolution = c(0.5))
+seurat_clean <- FindClusters(seurat_clean, resolution = 0.5)
 
 # Ejecutar UMAP
 seurat_clean <- RunUMAP(seurat_clean, dims = 1:15)
@@ -513,7 +515,20 @@ print(plot_clean_clusters + plot_clean_groups)
 Se evaluó la composición de cada clúster según la proporción de células pertenecientes a cada condición experimental.
 
 ```{r}
+# Tabla con los clústers y condiciones experimentales
+tab_cluster_group_clean <- table(Cluster = Idents(seurat_clean), Condicion = seurat_clean$Group)
 
+# Convertir la tabla en un dataframe
+df_cluster_group_clean <- as.data.frame(tab_cluster_group_clean)
+
+# Renombrar las columnnas para mayor claridad
+colnames(df_cluster_group_clean) <- c("Cluster", "Group", "Cells")
+
+# Calcular porcentaje de células en cada condición
+df_cluster_group_clean <- df_cluster_group_clean %>%
+  group_by(Cluster) %>% mutate(Percent = Cells / sum(Cells) * 100)
+
+# Representación gráfica
 ggpiestats(
   data = df_cluster_group_clean,
   x = "Group",
@@ -540,14 +555,21 @@ Se identificaron los genes diferencialmente expresados que caracterizan cada uno
 Idents(seurat_clean) <- "RNA_snn_res.0.5"
 
 # Genes sobreexpresados por clúster
-markers_cluster0 <- FindMarkers(seurat_clean, ident.1 = "0", ident.2 = NULL, only.pos = TRUE, 
+markers_cluster0 <- FindMarkers(seurat_clean, ident.1 = "0", 
+                                ident.2 = NULL, only.pos = TRUE, 
                                 min.pct = 0.25, logfc.threshold =  0.25 )
-markers_cluster1 <- FindMarkers(seurat_clean, ident.1 = "1", ident.2 = NULL, only.pos = TRUE,
+
+markers_cluster1 <- FindMarkers(seurat_clean, ident.1 = "1", 
+                                ident.2 = NULL, 
+                                only.pos = TRUE,
                                 min.pct =  0.25, logfc.threshold =  0.25)
-markers_cluster2 <- FindMarkers(seurat_clean, ident.1 = "2", ident.2 = NULL, only.pos = TRUE,
+
+markers_cluster2 <- FindMarkers(seurat_clean, ident.1 = "2", 
+                                ident.2 = NULL, 
+                                only.pos = TRUE,
                                 min.pct =  0.25, logfc.threshold =  0.25) 
 
-# Seleccionar los genes más diferencialmente expresados
+# Seleccionar los genes con mayor sobreexpresión
 top0 <- markers_cluster0  %>%  arrange(desc(avg_log2FC)) %>% head(20)
 top1 <- markers_cluster1  %>%  arrange(desc(avg_log2FC)) %>% head(20)
 top2 <- markers_cluster2  %>%  arrange(desc(avg_log2FC)) %>% head(20)
@@ -566,14 +588,16 @@ seurat_clean <- ScaleData(seurat_clean, features = genes_clusters)
 labels_genes <- tabla_meta_genes$Symbol
 names(labels_genes) <- rownames(tabla_meta_genes)
 
-de_is <- DoHeatmap(seurat_clean, features = genes_clusters, group.by = "RNA_snn_res.0.5", label = TRUE) +
+heatmap_is <- DoHeatmap(seurat_clean, features = genes_clusters, 
+  group.by = "RNA_snn_res.0.5", label = TRUE) +
   scale_y_discrete(labels = labels_genes) +
   scale_fill_gradientn(colors = c("darkblue", "white", "red"),
   limits = c(-2,2), oob = scales::squish) +
   ggtitle("Top 20 genes DE por cluster - Isla Sur") + 
-  theme(axis.text.y = element_text(size = 7, lineheight = 1.2), plot.margin = margin(10,10,10,10))
+  theme(axis.text.y = element_text(size = 7, lineheight = 1.2), 
+  plot.margin = margin(10,10,10,10))
 
-print(de_is)
+print(heatmap_is)
 
 ```
 
@@ -588,7 +612,8 @@ markers_isla_clean <- FindAllMarkers(
 )
 
 # Filtrar marcadores MB
-markers_mb_isla_clean <- markers_isla_clean[markers_isla_clean$gene %in% mb_markers, ]
+markers_mb_isla_clean <- markers_isla_clean[markers_isla_clean$gene 
+                                            %in% mb_markers, ]
 
 # Añadir símbolos génicos
 markers_mb_isla_clean$Symbol <- diccionario_mb[markers_mb_isla_clean$gene]
@@ -657,7 +682,7 @@ DotPlot(
 
 ### 10.3.3 Visualización individual de marcadores MB
 
-**Expresión de *`prt`***
+**1) Expresión de *`prt`***
 
 ```{r}
 # ID interno
@@ -677,33 +702,13 @@ VlnPlot(
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-**Expresión de *`mub`***
-
-```{r}
-# ID interno
-mub <- "Dmel-CG7437"
-
-# Símbolo génico
-mb_marker_name <- tabla_meta_genes$Symbol[match(mub, rownames(tabla_meta_genes))]
-
-VlnPlot(
-  seurat_clean,
-  features = mub,          
-  group.by = "seurat_clusters",    
-  pt.size = 0
-) +
-  ggtitle(mb_marker_name) + 
-  xlab("Clusters") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-**Expresión de *`Dop1R2`***
+**2) Expresión de *`Dop1R2`***
 
 ```{r}
 # ID interno
 Dop1R2 <- "Dmel-CG18741"
 
-#  Símbolo génico
+# Símbolo génico
 mb_marker_name <- tabla_meta_genes$Symbol[match(Dop1R2, rownames(tabla_meta_genes))]
 
 VlnPlot(
@@ -717,7 +722,7 @@ VlnPlot(
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-**Expresión de *`mamo`***
+**3) Expresión de *`mamo`***
 
 ```{r}
 # ID interno
@@ -737,7 +742,7 @@ VlnPlot(
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-**Expresión de *`ey`***
+**4) Expresión de *`ey`***
 
 ```{r}
 # ID interno
@@ -766,7 +771,7 @@ VlnPlot(
 Se seleccionaron únicamente las células pertenecientes a las condiciones CC_T y SC_T para evaluar los cambios transcripcionales asociados al aprendizaje.
 
 ```{r}
-# Subset del  
+# Subset de los grupos de interés
 seurat_598_597 <- subset(seurat_clean, subset = orig.ident %in% c("GC160598", "GC160597"))
 
 # Control de calidad
@@ -777,7 +782,7 @@ VlnPlot(seurat_598_597, features = c("nFeature_RNA", "nCount_RNA", "percent.mt")
 **1. Normalización y escalado**
 
 ```{r}
-# Reprocesado del  Seurat
+# Reprocesado del objeto Seurat
 seurat_598_597 <- NormalizeData(seurat_598_597)
 seurat_598_597 <- FindVariableFeatures(seurat_598_597, nfeatures = 2000)
 seurat_598_597 <- ScaleData(seurat_598_597)
@@ -801,11 +806,11 @@ ElbowPlot(seurat_598_597)
 Se realizó un clustering utilizando las primeras 15 componentes principales.
 
 ```{r}
-# Construcción del gafo de vecinos
+# Construcción del grafo de vecinos
 seurat_598_597 <- FindNeighbors(seurat_598_597, dims = 1:15)
 
 # Clustering
-seurat_598_597 <- FindClusters
+seurat_598_597 <- FindClusters(seurat_598_597, resolution = 0.3)
 
 # UMAP
 seurat_598_597 <- RunUMAP(seurat_598_597, dims = 1:15)
@@ -825,7 +830,8 @@ DimPlot(seurat_598_597, reduction = "umap", group.by = "Group") + ggtitle("Condi
 Idents(seurat_598_597) <- "orig.ident"
 
 # Análisis de expresión diferencial
-genes_9897 <- FindMarkers(seurat_598_597, ident.1 = "GC160598", ident.2 = "GC160597", min.pct = 0.25, logfc.threshold = 0.25)
+genes_9897 <- FindMarkers(seurat_598_597, ident.1 = "GC160598", 
+              ident.2 = "GC160597", min.pct = 0.25, logfc.threshold = 0.25)
 
 # Añadir símbolos génicos
 genes_9897$Symbol <- tabla_meta_genes[rownames(genes_9897), "Symbol"]
@@ -855,7 +861,7 @@ genes_combo <- c(top_up, top_down)
 # Escalar genes seleccionados
 seurat_598_597 <- ScaleData(seurat_598_597, features = genes_combo)
 
-# # Orden interno por PC1
+# Orden interno por PC1
 seurat_598_597$PC1 <- Embeddings(seurat_598_597, "pca")[,1]
 
 # Ordenar células
@@ -863,7 +869,7 @@ meta_orden <- seurat_598_597@meta.data
 celulas_ordenadas <- rownames(meta_orden[order(meta_orden$orig.ident, meta_orden$PC1), ])
 
 # Heatmap
-co <- DoHeatmap(
+heatmap_aprendizaje <- DoHeatmap(
     seurat_598_597, 
     features = genes_combo, 
     cells = celulas_ordenadas,      
@@ -883,7 +889,7 @@ co <- DoHeatmap(
     plot.margin = margin(10, 10, 10, 10)
   )
 
-print(co)
+print(heatmap_aprendizaje)
 
 ```
 
@@ -894,7 +900,7 @@ print(co)
 Se seleccionaron las células correspondientes a las condiciones SC_T y SC_T_REACT para evaluar el efecto transcriptómico asociado a la reactivación del condicionamiento social.
 
 ```{r}
-# Subset del  
+# Subset de los grupos de interés
 seurat_596_597 <- subset(seurat_clean, subset = orig.ident %in% c("GC160596", "GC160597"))
 
 # Control de calidad
@@ -904,7 +910,7 @@ VlnPlot(seurat_596_597, features = c("nFeature_RNA", "nCount_RNA", "percent.mt")
 **1. Normalizacióny escalado**
 
 ```{r}
-# Reprocesado del  Seurat
+# Reprocesado del objeto Seurat
 seurat_596_597 <- NormalizeData(seurat_596_597)
 seurat_596_597 <- FindVariableFeatures(seurat_596_597, nfeatures = 2000)
 seurat_596_597 <- ScaleData(seurat_596_597)
@@ -949,9 +955,13 @@ DimPlot(seurat_596_597, reduction = "umap", group.by = "Group") + ggtitle("Condi
 ### 11.2.2 Genes diferencialmente expresados
 
 ```{r}
-# Análisis diferencial controlando por clúster
-genes_react_ctrl <- FindMarkers(seurat_596_597, ident.1 = "GC160596", ident.2 = "GC160597", 
-                                min.pct = 0.25, logfc.threshold = 0.25, latent.vars = "seurat_clusters")
+# Definimos las identidades
+Idents(seurat_596_597) <- "orig.ident"
+
+# Análisis diferencial por clúster
+genes_react_ctrl <- FindMarkers(seurat_596_597, 
+                    ident.1 = "GC160596", ident.2 = "GC160597", 
+                    min.pct = 0.25, logfc.threshold = 0.25)
 
 # Añadir símbolos génicos
 genes_react_ctrl$Symbol <- tabla_meta_genes[rownames(genes_react_ctrl), "Symbol"]
@@ -979,24 +989,30 @@ genes_heat <- c(top_up, top_down)
 seurat_596_597 <- ScaleData(seurat_596_597, features = genes_heat)
 
 # Heatmap
-tt <- DoHeatmap(seurat_596_597, features = genes_heat, size = 3, group.by = "Group", label = FALSE) + 
+heatmap_react_cc <- DoHeatmap(seurat_596_597, features = genes_heat, size = 3, 
+  group.by = "Group", label = FALSE) + 
   scale_y_discrete(labels = labels_genes) +
   scale_fill_gradientn(colors = c("darkblue", "white", "red"),
   limits = c(-2,2), oob = scales::squish) + 
-  ggtitle("Reactivación de memoria: SC_T vs SC_T_REACT") +
-  theme(axis.text.y = element_text(size = 7, lineheight = 1.2), plot.margin = margin(10,10,10,10))
+  ggtitle("Reactivación de condicionamiento social: SC_T vs SC_T_REACT") +
+  theme(axis.text.y = element_text(size = 7, lineheight = 1.2), 
+        plot.margin = margin(10,10,10,10))
 
-print(tt)
+print(heatmap_react_cc )
 
 ```
 
-# 12. Análisis del Mushroom Body (MB)
+# 12. Análisis del MB 
 
-Tras los análisis previos, se identificó que el clúster 1 de la isla sur correspondía a células del MB. En este apartado se realizan análisis específicos centrados exclusivamente en este subconjunto celular para estudiar la organización de los lóbulos del MB y la respuesta transcriptómica asociada al aprendizaje y la reactivación de memoria.
+Tras los análisis previos, se identificó que el clúster 1 de la isla sur correspondía a células del MB.\
+En este apartado se realizan análisis específicos centrados exclusivamente en este subconjunto celular para estudiar la organización de los lóbulos del MB y la respuesta transcriptómica asociada al aprendizaje y la reactivación de memoria.
 
 ```{r}
-# Subset del 
-seurat_MB <- subset(seurat_clean, subset = RNA_snn_res.0.5 == "1")
+# Subset del clúster que corresponde al MB
+seurat_MB <- subset(seurat_clean, subset = RNA_snn_res.0.5 == "2")
+
+# Comprobamos que ha funcionado
+table(seurat_MB$RNA_snn_res.0.5, seurat_MB$orig.ident)
 ```
 
 ## 12.1 Reprocesado de datos
@@ -1004,7 +1020,7 @@ seurat_MB <- subset(seurat_clean, subset = RNA_snn_res.0.5 == "1")
 **1. Normalización y escalado**
 
 ```{r}
-# Reprocesado del  Seurat
+# Reprocesado del objeto Seurat
 seurat_MB <- NormalizeData(seurat_MB)
 seurat_MB <- FindVariableFeatures(seurat_MB)
 seurat_MB <- ScaleData(seurat_MB)
@@ -1017,7 +1033,8 @@ seurat_MB <- ScaleData(seurat_MB)
 seurat_MB <- RunPCA(seurat_MB)
 
 # Visualización de PCA
-DimPlot(seurat_MB, reduction = "pca", group.by = "Group") + coord_cartesian(xlim = c(-20,20), ylim = c(-20,20))
+DimPlot(seurat_MB, reduction = "pca", group.by = "Group") + 
+  coord_cartesian(xlim = c(-20,20), ylim = c(-20,20))
 
 # Determinar PCs relevantes
 ElbowPlot(seurat_MB)
@@ -1042,7 +1059,8 @@ seurat_MB <- RunUMAP(seurat_MB, dims = 1:15)
 plot_clusters <- DimPlot(seurat_MB, reduction = "umap", label = TRUE) + ggtitle("Clústers Automáticos")
 
 # Visualización por condiciones experimentales
-plot_groups <- DimPlot(seurat_MB, reduction = "umap", group.by = "Group") + ggtitle("Grupos Experimentales")
+plot_groups <- DimPlot(seurat_MB, reduction = "umap", group.by = "Group") + 
+  ggtitle("Grupos Experimentales")
 
 # Mostrar ambos gráficos
 print(plot_clusters + plot_groups)
@@ -1057,10 +1075,13 @@ Para caracterizar molecularmente estos lóbulos, se analizaron marcadores descri
 
 ```{r}
 # Lista de marcadores MB descritos en la literatura
-marcadores_mb_lob <- c("CG34370", "CG8641", "DAT", "cmpy", "trio", "mamo", "Pka-C3", "Rbp6", "CG33543", "imp", "norpA", "Hs3st-A", "Ca-alpha1T", "Eip93F", "qm", "pros", "bol", "CG3625", "Sytalpha", "hzg", "sNPF", "Bx", "Fas2", "trv", "Mef2", "fru", "GstD11", "CG13055", "ab" )
+marcadores_mb_lob <- c("CG34370", "CG8641", "DAT", "cmpy", "trio", "mamo", 
+"Pka-C3", "Rbp6", "CG33543", "imp", "norpA", "Hs3st-A", "Ca-alpha1T", "Eip93F", "qm", "pros", "bol", "CG3625", "Sytalpha", "hzg", "sNPF", "Bx", "Fas2", "trv", "Mef2", "fru", "GstD11", "CG13055", "ab" )
 
 # Búsqueda de IDs internos
-df_lookup <- tabla_meta_genes[tabla_meta_genes$Symbol %in% marcadores_mb_lob, , drop = FALSE]
+df_lookup <- tabla_meta_genes[tabla_meta_genes$Symbol 
+              %in% marcadores_mb_lob, , drop = FALSE]
+
 df_lookup <- df_lookup[!is.na(df_lookup$Symbol), , drop = FALSE]
 
 # IDs presentes en el 
@@ -1127,7 +1148,7 @@ nombres_gamma <- setNames(df_ga$Symbol, rownames(df_ga))
 nombres_gamma <- nombres_gamma[names(nombres_gamma) %in% ids_ga]
 
 # Visualización
-p <- VlnPlot(
+g <- VlnPlot(
   seurat_MB,
   features = ids_ga,
   group.by = "RNA_snn_res.0.7",
@@ -1136,7 +1157,7 @@ p <- VlnPlot(
   pt.size = 0         
 ) 
    
-p + 
+g + 
   labs(title = "Lóbulo γ", x = "Clusters") +
   facet_wrap(~feature,labeller = labeller(feature = nombres_gamma)) +
   scale_fill_discrete(labels = nombres_gamma) 
@@ -1159,7 +1180,7 @@ nombres_ab <- setNames(df_ab$Symbol, rownames(df_ab))
 nombres_ab <- nombres_ab[names(nombres_ab) %in% ids_ab]
 
 # Visualización
-b <- VlnPlot(
+ab <- VlnPlot(
   seurat_MB,
   features = ids_ab,
   group.by = "RNA_snn_res.0.7",
@@ -1167,9 +1188,10 @@ b <- VlnPlot(
   flip = TRUE,
   pt.size = 0
 ) 
-b + 
+ab + 
   labs(title = "Lóbulo α/β", x = "Clusters") +
-  facet_wrap(~feature,labeller = labeller(feature = nombres_ab)) + scale_fill_discrete(labels = nombres_ab)
+  facet_wrap(~feature,labeller = labeller(feature = nombres_ab)) +
+  scale_fill_discrete(labels = nombres_ab)
 
 ```
 
@@ -1187,7 +1209,7 @@ nombres_ab_2 <- setNames(df_ab_2$Symbol, rownames(df_ab_2))
 nombres_ab_2 <- nombres_ab_2[names(nombres_ab_2) %in% ids_ab_2]
 
 # Visualización
-b <- VlnPlot(
+ab <- VlnPlot(
   seurat_MB,
   features = ids_ab_2,
   group.by = "RNA_snn_res.0.7",
@@ -1195,13 +1217,14 @@ b <- VlnPlot(
   flip = TRUE,
   pt.size = 0
 ) 
-b + 
+ab + 
   labs(title = "Lóbulo α/β", x = "Clusters") +
-  facet_wrap(~feature,labeller = labeller(feature = nombres_ab_2)) + scale_fill_discrete(labels = nombres_ab_2) 
+  facet_wrap(~feature,labeller = labeller(feature = nombres_ab_2)) +
+  scale_fill_discrete(labels = nombres_ab_2) 
 
 ```
 
-**´Marcadores Alpha'/Beta'\`**
+**`Marcadores Alpha'/Beta'`**
 
 ```{r}
 # Marcadores alpha'/beta'
@@ -1217,7 +1240,7 @@ nombres_apbp <- setNames(df_apbp$Symbol, rownames(df_apbp))
 nombres_apbp <- nombres_apbp[names(nombres_apbp) %in% ids_apbp]
 
 # Visualización
-c <- VlnPlot(
+abp <- VlnPlot(
   seurat_MB,
   features = ids_apbp,
   group.by = "RNA_snn_res.0.7", # O tu columna de clusters
@@ -1226,7 +1249,7 @@ c <- VlnPlot(
   flip = TRUE
 ) 
 
-c + 
+abp + 
   labs(title = "Lóbulo α’/β’", x = "Clusters") +
   facet_wrap(~feature, labeller = labeller(feature = nombres_apbp)) + 
   scale_fill_discrete(labels = nombres_apbp)
@@ -1244,22 +1267,23 @@ Se compararon las condiciones CC_T y SC_T únicamente dentro de las células del
 MB_2groups <- subset(seurat_MB, subset = orig.ident %in% c("GC160597", "GC160598"))
 
 # QC
-VlnPlot(MB_2groups, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "orig.ident", ncol = 3)
+VlnPlot(MB_2groups, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        group.by = "orig.ident", ncol = 3)
 
 ```
 
 #### 12.3.1.1 Reprocesado de datos
 
-**1.Normalizamos y escalamos**
+**1. Normalizamos y escalamos**
 
 ```{r}
-# Reprocesar el  Seurat
+# Reprocesar el objeto Seurat
 MB_2groups <- NormalizeData(MB_2groups)
 MB_2groups <- FindVariableFeatures(MB_2groups, nfeatures = 2000)
 MB_2groups <- ScaleData(MB_2groups)
 ```
 
-**2.PCA**
+**2. PCA**
 
 ```{r}
 # Ejecutar PCA
@@ -1272,7 +1296,9 @@ DimPlot(MB_2groups, reduction = "pca", group.by = "orig.ident") + coord_cartesia
 ElbowPlot(MB_2groups)
 ```
 
-**3.Clustering** Se realizó un clustering utilizando las primeras 15 componentes principales.
+**3. Clustering**
+
+Se realizó un clustering utilizando las primeras 15 componentes principales.
 
 ```{r}
 # Construcción del grafo de vecinos
@@ -1294,8 +1320,7 @@ DimPlot(MB_2groups, reduction = "umap", group.by = "Group") + ggtitle("Condicion
 
 #### 12.3.1.2 Análisis diferencial
 
-```{r eval}
-
+```{r}
 # Definimos identidades
 Idents(MB_2groups) <- "orig.ident"
 
@@ -1327,7 +1352,7 @@ meta_orden <- MB_2groups@meta.data
 cels_ord <- rownames(meta_orden[order(meta_orden$orig.ident, meta_orden$PC1), ])
 
 # Heatmap
-cc <- DoHeatmap(
+heatmap_aprend_MB <- DoHeatmap(
   MB_2groups,
   features = genes_heatmap_mb,
   group.by = "Group",
@@ -1338,41 +1363,43 @@ cc <- DoHeatmap(
   scale_fill_gradientn(colors = c("darkblue", "white", "red"),
   limits = c(-2,2), oob = scales::squish) +
   ggtitle("Aprendizaje CC_T vs SC_T (MB)") + theme(
-    axis.text.y = element_text(size = 7, lineheight = 1.2), plot.margin = margin(10,10,10,10))
+    axis.text.y = element_text(size = 7, lineheight = 1.2), 
+    plot.margin = margin(10,10,10,10))
 
-print(cc)
+print(heatmap_aprend_MB)
 
 ```
 
 ### 12.3.2 Efecto de la reactivación de condicionamiento social (SC_T vs SC_T_REACT)
 
-se compararon las células del MB pertenecientes a SC_T y SC_T_REACT.
+Se compararon las condicioness de SC_T y SC_T_REACT únicamente dentro de las células del MB.
 
 ```{r}
-# Subset de los grupos
+# Subset de los grupos de interés
 MB_SC_only <- subset(seurat_MB, subset = orig.ident %in% c("GC160597", "GC160596"))
 
 # QC
-VlnPlot(MB_SC_only, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "orig.ident", ncol = 3)
+VlnPlot(MB_SC_only, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        group.by = "orig.ident", ncol = 3)
 
 ```
 
 #### 12.3.2.1 Reprocesado de datos
 
-**1.Normalizamos y escalamos**
+**1. Normalizamos y escalamos**
 
 ```{r}
-# Reprocesar el  Seurat
+# Reprocesar el objeto Seurat
 MB_SC_only <- NormalizeData(MB_SC_only)
 MB_SC_only <- FindVariableFeatures(MB_SC_only, nfeatures = 2000)
 MB_SC_only <- ScaleData(MB_SC_only)
 ```
 
-**2.PCA**
+**2. PCA**
 
 ```{r}
 # Ejectuar PCA
-MB_SC_only <- RunPCA(MB_SC_only)
+MB_SC_only <- RunPCA(MB_SC_only, npcs = 40) 
 
 # Visualizar PCA
 DimPlot(MB_SC_only, reduction = "pca", group.by = "orig.ident") + coord_cartesian(xlim = c(-20,20), ylim = c(-20,20))
@@ -1381,7 +1408,9 @@ DimPlot(MB_SC_only, reduction = "pca", group.by = "orig.ident") + coord_cartesia
 ElbowPlot(MB_SC_only)
 ```
 
-**3.Clustering** Se realizó un clustering utilizando las primeras 15 componentes principales.
+**3. Clustering** 
+
+Se realizó un clustering utilizando las primeras 15 componentes principales.
 
 ```{r}
 # Construcción del grafo de vecinos
@@ -1404,7 +1433,6 @@ DimPlot(MB_SC_only, reduction = "umap", group.by = "Group") + ggtitle("Condicion
 #### 12.3.2.2 Análisis diferencial
 
 ```{r}
-
 # Definimos identidades
 Idents(MB_SC_only) <- "orig.ident"
 
@@ -1418,14 +1446,17 @@ DE_REACT_vs_SC_MB <- FindMarkers(
 )
 
 # Filtrado de genes significativos
-DE_REACT_vs_SC_MB <- DE_REACT_vs_SC_MB %>% filter(p_val < 0.05 & abs(avg_log2FC) > 0.25)
+DE_REACT_vs_SC_MB <- DE_REACT_vs_SC_MB %>% filter(p_val < 0.05 & 
+                                                  abs(avg_log2FC) > 0.25)
 
 # Diccionario de ID
 dicc_SC_REACT <- setNames(tabla_meta_genes$Symbol, rownames(tabla_meta_genes))
 
 # Selección de genes para heatmap
-top_up_SC <- DE_REACT_vs_SC_MB %>% filter(avg_log2FC > 0.25) %>% arrange(p_val) %>% head(20)
-top_down_SC <- DE_REACT_vs_SC_MB %>% filter(avg_log2FC < -0.25) %>% arrange(p_val) %>% head(20)
+top_up_SC <- DE_REACT_vs_SC_MB %>% filter(avg_log2FC > 0.25) %>% 
+  arrange(p_val) %>% head(20)
+top_down_SC <- DE_REACT_vs_SC_MB %>% filter(avg_log2FC < -0.25) %>% 
+  arrange(p_val) %>% head(20)
 genes_heatmap_SC <- c(rownames(top_up_SC), rownames(top_down_SC))
 
 # Escalado de datos
@@ -1433,11 +1464,14 @@ MB_SC_only <- ScaleData(MB_SC_only, features = genes_heatmap_SC)
 
 # Orden interno por PC1
 MB_SC_only$PC1 <- Embeddings(MB_SC_only, "pca")[,1]
+
+# Ordenar células
 meta_orden_SC <- MB_SC_only@meta.data
-cels <- rownames(meta_orden_SC[order(meta_orden_SC$orig.ident, meta_orden_SC$PC1), ])
+cels <- rownames(meta_orden_SC[order(meta_orden_SC$orig.ident, 
+                                     meta_orden_SC$PC1), ])
 
 # Heatmap
-bb <- DoHeatmap(
+heatmap_cc_mb <- DoHeatmap(
   MB_SC_only,
   features = genes_heatmap_SC,
   group.by = "Group",
@@ -1447,18 +1481,22 @@ bb <- DoHeatmap(
   scale_y_discrete(labels = dicc_SC_REACT) +
   scale_fill_gradientn(colors = c("darkblue", "white", "red"),
   limits = c(-2,2), oob = scales::squish) +
-  ggtitle("Reactivación de memoria: SC_T vs SC_T_REACT (MB)") + theme(
-    axis.text.y = element_text(size = 7, lineheight = 1.2), plot.margin = margin(10,10,10,10))
+  ggtitle("Reactivación de condicionamiento social: 
+          SC_T vs SC_T_REACT (MB)") + theme(
+    axis.text.y = element_text(size = 7, lineheight = 1.2), 
+    plot.margin = margin(10,10,10,10))
 
-print(bb)
+print(heatmap_cc_mb)
 
 ```
 
 ## 12.4 Análisis del gen *Hr38*
 
-En este apartado, se seleccionaron las células en función de su nivel de expresión de *Hr38* en el grupo SC_T_REACT.
+En este apartado, se seleccionaron las células en función de su nivel de expresión de *Hr38* en el grupo SC_T_REACT. Se definieron dos grupos:
 
-Se definieron dos grupos: - Hr38_pos: células con expresión elevada de *Hr38*. - Hr38_neg: células sin expresión de *Hr38*.
+-   Hr38_pos: células con expresión elevada de *Hr38*.
+
+-   Hr38_neg: células sin expresión de *Hr38*.
 
 ```{r}
 # Distribución de Hr38
@@ -1483,8 +1521,8 @@ subset_react_mb <- subset(seurat_MB, Group == "SC_T_REACT")
 Idents(subset_react_mb) <- "Hr38_status"
 
 # Expresion diferencial 
-markers_Hr38_mb <- FindMarkers(subset_react_mb, ident.1 = "Hr38_pos", ident.2 = "Hr38_neg", 
-                            min.pct = 0.25, logfc.threshold = 0.25)
+markers_Hr38_mb <- FindMarkers(subset_react_mb, ident.1 = "Hr38_pos", 
+                  ident.2 = "Hr38_neg", min.pct = 0.25, logfc.threshold = 0.25)
 
 # Añadir etiquetas génicas
 markers_Hr38_mb$Symbol <- tabla_meta_genes[rownames(markers_Hr38_mb), "Symbol"]
@@ -1502,8 +1540,10 @@ markers_Hr38_mb
 
 ```{r}
 # Selección de genes diferencialmente expresados
-top_hr38_mb <- markers_Hr38_mb %>% filter(avg_log2FC > 0) %>% slice_max(avg_log2FC, n = 30) %>% rownames()
-down_hr38_mb <- markers_Hr38_mb %>% filter(avg_log2FC < 0) %>% slice_min(avg_log2FC, n = 30) %>% rownames()
+top_hr38_mb <- markers_Hr38_mb %>% filter(avg_log2FC > 0) %>% 
+  slice_max(avg_log2FC, n = 30) %>% rownames()
+down_hr38_mb <- markers_Hr38_mb %>% filter(avg_log2FC < 0) %>% 
+  slice_min(avg_log2FC, n = 30) %>% rownames()
 
 # Añadir genes de interés
 g <- "Dmel-CG10986"
@@ -1514,8 +1554,11 @@ genes_heatmap_hr38_mb <- c(top_hr38_mb, g, down_hr38_mb, tsu)
 subset_react_mb <- ScaleData(subset_react_mb, features = genes_heatmap_hr38_mb)
 
 # Orden interno por PC1
-subset_react_mb <- RunPCA(subset_react_mb, npcs = 30, features = genes_heatmap_hr38_mb, verbose = FALSE)
+subset_react_mb <- RunPCA(subset_react_mb, npcs = 30, 
+                  features = genes_heatmap_hr38_mb, verbose = FALSE)
 subset_react_mb$PC1 <- Embeddings(subset_react_mb, "pca")[,1]
+
+# Ordenar células
 meta_hr38_mb <- subset_react_mb@meta.data
 cels_hr38_orden_mb <- rownames(meta_hr38_mb[order(meta_hr38_mb$Hr38_status, meta_hr38_mb$PC1), ])
 
@@ -1523,7 +1566,7 @@ cels_hr38_orden_mb <- rownames(meta_hr38_mb[order(meta_hr38_mb$Hr38_status, meta
 diccionario_hr38_mb <- setNames(tabla_meta_genes$Symbol, rownames(tabla_meta_genes))
 
 # Heatmap
-firmamb <- DoHeatmap(
+heatmap_firma_mb <- DoHeatmap(
     subset_react_mb, 
     features = genes_heatmap_hr38_mb, 
     cells = cels_hr38_orden_mb,
@@ -1544,16 +1587,18 @@ firmamb <- DoHeatmap(
     plot.title = element_text(hjust = 0.5, face = "bold")
   )
 
-print(firmamb)
+print(heatmap_firma_mb)
 ```
 
 # 13. Análisis comparativos
+
+Se llevaron a cabo comparaciones a nivel global con datos descritos en trabajos previos. Para ello, se seleccionaron estudios relevantes tanto en *Drosophila melanogaster* (Jones et al., 2025; Chen et al., 2016) como en *Mus musculus* (Marco et al., 2020; Sun et al., 2023).
 
 **1. Preparación de listas de genes**
 
 ```{r}
 # Cargar las listas de genes descritas en distintos estudios
-listas <- read_excel("data/listas_genes/Total_genes.xlsx")
+listas <- read_excel("tablas/Total_genes.xlsx")
 
 # Cada columna corresponde a un estudio diferente
 listas_genes <- lapply(listas, function(col) na.omit(col))
@@ -1626,7 +1671,7 @@ Con el objetivo de evaluar la consistencia de los resultados obtenidos, se compa
 
 ### 13.1.1 Jones *et al*., 2025
 
-En este caso se utiliza una lista dirigida de genes seleccionados manualmente a partir de Jones et al., 2025. No se aplica overlap porque muchos genes relevantes no aparecen como significativos en nuestro análisis diferencial.
+En este caso se utiliza una lista dirigida de genes seleccionados manualmente a partir de Jones *et al*., 2025. No se aplica overlap porque muchos genes relevantes no aparecen como significativos en nuestro análisis diferencial.
 
 ```{r}
 genes_jones <- c("Dmel-CG1864", "Dmel-CG7847", "Dmel-GC17691", "Dmel-GC11700", "Dmel-CG2915", "Dmel-CG31301", "Dmel-CG11949", "Dmel-CG43738", "Dmel-CG2252", "Dmel-CG31094", "Dmel-CG12141", "Dmel-CG12218", "Dmel-CG3241", "Dmel-CG34403", "Dmel-CG43140", "Dmel-CG32717", "Dmel-CG2262", "Dmel-CG42338", "Dmel-CG4122")
@@ -1644,8 +1689,8 @@ mat_jones <- as.matrix(GetAssayData(seurat_clean, slot = "data")[genes_jones, ])
 # Escalado por gen
 mat_jones <- t(scale(t(mat_jones)))
 
-# Ordenamos los genes según su expresión media en el cluster 1 (MB)
-celulas_mb <- which(seurat_clean$RNA_snn_res.0.5 == "1")
+# Ordenamos los genes según su expresión media en el cluster 2 (MB)
+celulas_mb <- which(seurat_clean$RNA_snn_res.0.5 == "2")
 mean_expression_mb <- rowMeans(mat_jones[, celulas_mb])
 orden_genes <- order(mean_expression_mb, decreasing = TRUE)
 
@@ -1666,7 +1711,8 @@ heatmap_jones <- Heatmap(
   top_annotation = jo, 
   row_labels = labels_genes_final_jones,
   
-  cluster_rows = FALSE,         
+  cluster_rows = FALSE,  
+  cluster_columns = FALSE,
   show_column_names = FALSE,
   row_names_gp = gpar(fontsize = 8),
   col = colorRamp2(c(-2, 0, 2), c("darkblue", "white", "red")),
@@ -1712,6 +1758,11 @@ mat_chen <- as.matrix(GetAssayData(seurat_clean, slot = "data")[geneschen, ])
 # Escalado por gen
 mat_chen <- t(scale(t(mat_chen)))
 
+# Ordenamos los genes según su expresión media en el cluster 2 (MB)
+celulas_mb <- which(seurat_clean$RNA_snn_res.0.5 == "2")
+mean_expression_mb <- rowMeans(mat_chen[, celulas_mb])
+orden_genes <- order(mean_expression_mb, decreasing = TRUE)
+
 # Aplicamos el orden a la matriz y a las etiquetas
 mat_chen <- mat_chen[orden_genes, orden_celulas]
 labels_genes_final_chen <- tabla_meta_genes[rownames(mat_chen), "Symbol"]
@@ -1730,8 +1781,7 @@ heatmap_chen <- Heatmap(
   row_labels = labels_genes_final_chen,
   
   cluster_rows = FALSE,         
-  cluster_columns = FALSE,      
-  
+  cluster_columns = FALSE, 
   show_column_names = FALSE,
   row_names_gp = gpar(fontsize = 8),
   col = colorRamp2(c(-2, 0, 2), c("darkblue", "white", "red")),
@@ -1780,6 +1830,11 @@ mat_marco <- as.matrix(GetAssayData(seurat_clean, slot = "data")[genesmarco, ])
 
 # Escalado por gen
 mat_marco <- t(scale(t(mat_marco)))
+
+# Ordenamos los genes según su expresión media en el cluster 2 (MB)
+celulas_mb <- which(seurat_clean$RNA_snn_res.0.5 == "2")
+mean_expression_mb <- rowMeans(mat_marco[, celulas_mb])
+orden_genes <- order(mean_expression_mb, decreasing = TRUE)
 
 # Aplicamos el orden a la matriz y a las etiquetas
 mat_marco <- mat_marco[orden_genes, orden_celulas]
@@ -1845,6 +1900,11 @@ mat_sun <- as.matrix(GetAssayData(seurat_clean, slot = "data")[genessun, ])
 
 # Escalado por gen
 mat_sun <- t(scale(t(mat_sun)))
+
+# Ordenamos los genes según su expresión media en el cluster 2 (MB)
+celulas_mb <- which(seurat_clean$RNA_snn_res.0.5 == "2")
+mean_expression_mb <- rowMeans(mat_sun[, celulas_mb])
+orden_genes <- order(mean_expression_mb, decreasing = TRUE)
 
 # Aplicamos el orden a la matriz y a las etiquetas
 mat_sun <- mat_sun[orden_genes, orden_celulas]
