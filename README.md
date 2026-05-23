@@ -15,12 +15,11 @@ El presente trabajo tiene como objetivo general identificar diferencias en los p
 
 ## Estructura del trabajo
 
-´´´
+```
 ├───1_control_calidad
 │   ├───results_multiqc
 │   │   │   multiqc_report.html
 │   │   └───multiqc_data
-│   │
 │   └───script
 │           QC.sh
 │
