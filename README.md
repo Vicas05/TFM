@@ -68,4 +68,51 @@ El presente trabajo tiene como objetivo general identificar diferencias en los p
 
 ---
 
+## Herramientas y entornos
+El proyecto se desarrolló en un entorno Linux utilizando scripts en Bash y análisis posteriores en R mediante documentos Quarto (`.qmd`).
+
+#### Preprocesado y alineamiento
+- FastQC (v12.1)
+- MultiQC (v1.31)
+- STAR (v2.7.9a)
+- Htseq-count (v2.0.2)
+
+#### Análisis transcriptómico
+- R (v4.4.1)
+- Seurat (v5)
+
+El resto de dependencias de R utilizadas en el trabajo se pueden encontrar en el archivo `requirements_R.txt`.
+
+---
+
+## Ejecutar el proyecto
+
+1. Clonar el repositorio
+
+```bash
+git clone URL
+```
+
+2. Instalar paquetes de R
+
+```r
+packages <- readLines("requirements_R.txt")
+install.packages(packages)
+```
+
+3. Ejecutar los scripts en orden:
+
+   - `1_control_calidad`
+       - `QC.sh`
+   - `2_alineamiento_STAR`
+       - `1_generar_manifest.sh`
+       - `2_indice_STAR.sh`
+       - `3_alineamiento_STAR.sh`
+    - `3_HTSeq_count`
+      - `HTSeq_count.sh`
+    - `4_analisis_scRNAseq`
+      - `Analisis_scRNAseq.qmd`
+  
+---  
+
 
