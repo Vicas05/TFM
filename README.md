@@ -1,7 +1,7 @@
 # Estudio transcriptómico de la memoria en *Drosophila melanogaster*
 Este repositorio contiene el proyecto desarrollado como parte del Trabajo de Fin de Máster del Máster de Bioinformática y Biología Computacional en la Universidad Autónoma de Madrid (curso 2024-2026).
 
-El presente trabajo tiene como objetivo general identificar diferencias en los perfiles transcripcionales asociados a distintos paradigmas de aprendizaje social tanto entre poblaciones neuronales como entre condiciones experimentales, y evaluar la posible conservación de mecanismos moleculares asociados a la memoria, utilizando Drosophila melanogaster. 
+El presente trabajo tiene como objetivo general identificar diferencias en los perfiles transcripcionales asociados a distintos paradigmas de aprendizaje social tanto entre poblaciones neuronales como entre condiciones experimentales, y evaluar la posible conservación de mecanismos moleculares asociados a la memoria, utilizando *Drosophila melanogaster*. 
 
 --- 
 
