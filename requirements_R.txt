@@ -1,0 +1,13 @@
+tidyr
+patchwork
+ComplexHeatmap
+circlize
+biomaRt
+openxlsx
+readxl
+ggstatsplot
+ggplot2
+dplyr
+patchwork
+ggrepel
+UpSetR
