@@ -63,7 +63,7 @@ El presente trabajo tiene como objetivo general identificar diferencias en los p
 │           star_stats.csv
 │           Total_genes.xlsx
 │
-└───_figuras_generadas
+└───5_figuras_generadas
 ```
 
 ---
