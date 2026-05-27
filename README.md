@@ -80,6 +80,7 @@ El proyecto se desarrolló en un entorno Linux utilizando scripts en Bash y aná
 #### Análisis transcriptómico
 - R (v4.4.1)
 - Seurat (v5)
+- DIOPT Ortholog Finder (v.9.1)
 
 El resto de dependencias de R utilizadas en el trabajo se pueden encontrar en el archivo `requirements_R.txt`.
 
